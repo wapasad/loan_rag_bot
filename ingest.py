@@ -8,7 +8,7 @@ load_dotenv()
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 # ডকুমেন্ট পড়া
-with open("policy.txt", "r", encoding="utf-8") as f:
+with open("policy.md", "r", encoding="utf-8") as f:
     text = f.read()
 
 # ছোট ছোট অংশে ভাগ করা
