@@ -3,11 +3,11 @@ import json
 import logging
 import os
 from pathlib import Path
-import time
 
 import numpy as np
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
@@ -15,6 +15,11 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 EMBEDDINGS_PATH = BASE_DIR / "embeddings.json"
+GENERATION_MODELS = (
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-latest",
+)
 
 _client: genai.Client | None = None
 _embeddings_cache: list[dict] | None = None
@@ -35,7 +40,13 @@ def get_genai_client() -> genai.Client:
         api_key = get_env("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY environment variable is not set.")
-        _client = genai.Client(api_key=api_key)
+        _client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(
+                timeout=10000,
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
+        )
     return _client
 
 
@@ -80,19 +91,20 @@ Question: {question}
 
 Answer:"""
 
-    for attempt in range(3):
+    last_error: Exception | None = None
+    for model_name in GENERATION_MODELS:
         try:
             response = client.models.generate_content(
-                model="gemini-flash-latest",
-                contents=prompt
+                model=model_name,
+                contents=prompt,
             )
             return response.text
-        except Exception as e:
-            if attempt < 2:
-                print(f"চেষ্টা {attempt+1} ব্যর্থ, আবার চেষ্টা করছি...")
-                time.sleep(1)
-            else:
-                raise e
+        except Exception as exc:
+            logging.warning("Model %s failed: %s", model_name, exc)
+            last_error = exc
+
+    assert last_error is not None
+    raise last_error
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
