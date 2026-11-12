@@ -1,53 +1,26 @@
-import asyncio
-from contextlib import asynccontextmanager
-import os
+import logging
 
 from fastapi import FastAPI, HTTPException, Request
 from telegram import Update
-from telegram.ext import Application
+from telegram.error import InvalidToken
 
-from bot import build_application
+from bot import build_application, get_env
 
-_ptb_app: Application | None = None
-_init_lock = asyncio.Lock()
-
-
-async def get_initialized_ptb_app() -> Application:
-    """Return a lazily initialized Telegram Application for webhook processing."""
-    global _ptb_app
-    async with _init_lock:
-        if _ptb_app is None:
-            _ptb_app = build_application(for_webhook=True)
-        await _ptb_app.initialize()
-        return _ptb_app
-
-
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    if os.environ.get("BOT_TOKEN"):
-        await get_initialized_ptb_app()
-    try:
-        yield
-    finally:
-        if _ptb_app is not None:
-            await _ptb_app.shutdown()
-
-
-app = FastAPI(title="Loan RAG Telegram Bot", lifespan=lifespan)
+app = FastAPI(title="Loan RAG Telegram Bot")
 
 
 @app.get("/")
 async def health():
     return {
         "status": "ok",
-        "bot_configured": bool(os.environ.get("BOT_TOKEN")),
-        "gemini_configured": bool(os.environ.get("GEMINI_API_KEY")),
+        "bot_configured": bool(get_env("BOT_TOKEN")),
+        "gemini_configured": bool(get_env("GEMINI_API_KEY")),
     }
 
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    expected_secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET")
+    expected_secret = get_env("TELEGRAM_WEBHOOK_SECRET")
     if expected_secret:
         received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
         if received_secret != expected_secret:
@@ -59,12 +32,14 @@ async def telegram_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
 
     try:
-        ptb_app = await get_initialized_ptb_app()
+        async with build_application(for_webhook=True) as ptb_app:
+            update = Update.de_json(payload, ptb_app.bot)
+            if update is not None:
+                await ptb_app.process_update(update)
+    except InvalidToken as exc:
+        logging.exception("Invalid BOT_TOKEN: %s", exc)
+        raise HTTPException(status_code=500, detail="Invalid BOT_TOKEN.") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    update = Update.de_json(payload, ptb_app.bot)
-    if update is not None:
-        await ptb_app.process_update(update)
 
     return {"ok": True}

@@ -20,11 +20,19 @@ _client: genai.Client | None = None
 _embeddings_cache: list[dict] | None = None
 
 
+def get_env(name: str) -> str:
+    """Read an environment variable and strip accidental whitespace or quotes."""
+    value = os.environ.get(name, "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        value = value[1:-1].strip()
+    return value
+
+
 def get_genai_client() -> genai.Client:
     """Return a cached Gemini client initialized from GEMINI_API_KEY."""
     global _client
     if _client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = get_env("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY environment variable is not set.")
         _client = genai.Client(api_key=api_key)
@@ -103,7 +111,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def build_application(token: str | None = None, *, for_webhook: bool = False) -> Application:
     """Create and configure the Telegram Application with message handlers."""
-    bot_token = token or os.environ.get("BOT_TOKEN")
+    bot_token = (token or get_env("BOT_TOKEN")).strip()
     if not bot_token:
         raise RuntimeError("BOT_TOKEN environment variable is not set.")
 
